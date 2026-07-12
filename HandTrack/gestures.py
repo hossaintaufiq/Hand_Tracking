@@ -40,6 +40,8 @@ class GestureEngine:
     DOUBLE_PINCH_MIN_GAP = 0.12   # ignore bounce / same pinch
     PINCH_ON = 0.05
     PINCH_OFF = 0.08              # hysteresis so release is clear
+    THUMBS_UP_MIN_DISTANCE = 0.22
+    THUMBS_UP_MIN_STABLE_FRAMES = 8
 
     def __init__(self) -> None:
         self.pen_active: bool = False
@@ -86,7 +88,10 @@ class GestureEngine:
             "ring": up(tips["ring"], pips["ring"]),
             "pinky": up(tips["pinky"], pips["pinky"]),
         }
-        thumb_up = float(np.linalg.norm(tips["thumb"][:2] - wrist[:2])) > 0.18
+        thumb_up = (
+            float(np.linalg.norm(tips["thumb"][:2] - wrist[:2])) > self.THUMBS_UP_MIN_DISTANCE
+            and float(tips["thumb"][1]) < float(wrist[1]) - 0.04
+        )
 
         pinch_dist = float(np.linalg.norm(tips["thumb"][:2] - tips["index"][:2]))
         # Hysteresis: must open fingers between pinches for a real double-pinch
@@ -134,7 +139,7 @@ class GestureEngine:
                 label = "palm"
             elif fingers["index"] and fingers["middle"] and not fingers["ring"] and not fingers["pinky"]:
                 label = "victory"
-            elif thumb_up and not fingers["index"] and not fingers["middle"]:
+            elif thumb_up and not any(fingers.values()):
                 label = "thumbs"
             elif fingers["index"] and not fingers["middle"] and not fingers["ring"]:
                 label = "point"
@@ -144,7 +149,7 @@ class GestureEngine:
             if k != label:
                 self._stable[k] = 0
 
-        if self._stable.get(label, 0) >= 4 and self._cooldown == 0:
+        if self._stable.get(label, 0) >= self.THUMBS_UP_MIN_STABLE_FRAMES and self._cooldown == 0:
             if label == "palm":
                 self.want_clear = True
                 state.gesture = Gesture.OPEN_PALM
