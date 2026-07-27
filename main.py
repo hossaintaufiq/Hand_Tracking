@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HandTrack — webcam hand landmarks + gesture pen.
+"""HandTrack — accurate webcam hand landmark tracking.
 
 Run
 ---
@@ -8,16 +8,8 @@ Run
 
 Controls
 --------
-Double-pinch (pinch twice quickly)  START pen / STOP pen
-Point with index (pen on)           Write on screen
-Pinch while pen on                  Lift stroke (pen stays on)
-Open palm                           Clear drawing
-Victory (V)                         Next pen color
-Fist                                Pause / resume
-Thumbs up                           Save snapshot
+S                                   Save snapshot
 H                                   Toggle help
-C                                   Clear
-S                                   Save
 Q / Esc                             Quit
 """
 

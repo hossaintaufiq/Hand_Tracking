@@ -1,30 +1,25 @@
-"""HandTrack application — camera, landmarks, pen drawing, gestures."""
+"""HandTrack application — accurate camera hand landmarks."""
 
 from __future__ import annotations
 
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
 
-from HandTrack.canvas import PenCanvas
-from HandTrack.gestures import GestureEngine
 from HandTrack.overlay import draw_hands, draw_help, draw_hud
 from HandTrack.tracker import HandTracker
 
 
 class HandTrackApp:
-    """Full camera hand tracking + gesture pen."""
+    """Live webcam hand tracking with MediaPipe-style skeleton overlay."""
 
     def __init__(self, camera_index: int = 0) -> None:
         root = Path(__file__).resolve().parent
         model = root / "models" / "hand_landmarker.task"
         self.tracker = HandTracker(model, max_hands=2)
-        self.gestures = GestureEngine()
-        self.canvas: Optional[PenCanvas] = None
         self.camera_index = camera_index
         self.show_help = True
         self._fps = 0.0
@@ -44,12 +39,18 @@ class HandTrackApp:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, 30)
+        # Prefer sharper frames for landmark accuracy when the driver allows it
+        try:
+            cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
 
-        win = "HandTrack — Double-pinch START / STOP pen"
+        win = "HandTrack — accurate hand landmarks"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(win, 1280, 720)
 
-        print("HandTrack running. Double-pinch to toggle pen. Q to quit.")
+        print("HandTrack running — accurate landmark overlay. Q to quit.")
 
         try:
             while True:
@@ -58,47 +59,12 @@ class HandTrackApp:
                     break
 
                 frame = cv2.flip(frame, 1)
-                h, w = frame.shape[:2]
-                if self.canvas is None:
-                    self.canvas = PenCanvas(w, h)
-                else:
-                    self.canvas.resize(w, h)
-
-                hands = self.tracker.process(frame)
-                primary = hands[0] if hands else None
-                lms = primary.landmarks if primary else None
-                state = self.gestures.update(lms, time.perf_counter())
-
-                if self.gestures.consume_clear():
-                    self.canvas.clear()
-
-                if state.drawing and state.index_tip is not None:
-                    self.canvas.draw_to(state.index_tip, self.gestures.pen_color_index)
-                elif state.pen_active:
-                    self.canvas.lift()
-
-                frame = self.canvas.composite(frame)
-                frame = draw_hands(
-                    frame,
-                    hands,
-                    pen_active=state.pen_active,
-                    drawing=state.drawing,
-                    index_tip=state.index_tip,
-                )
+                hands = self.tracker.process(frame, mirrored=True)
+                frame = draw_hands(frame, hands)
 
                 self._tick_fps()
-                msg = state.message
-                if self.gestures.consume_save():
-                    path = self._save(frame)
-                    msg = f"Saved {path.name}"
-
-                frame = draw_hud(
-                    frame,
-                    message=msg,
-                    pen_active=state.pen_active,
-                    color_index=self.gestures.pen_color_index,
-                    fps=self._fps,
-                )
+                msg = "Tracking…" if hands else "No hand detected — hold hand clearly in frame"
+                frame = draw_hud(frame, hands=len(hands), fps=self._fps, message=msg)
                 if self.show_help:
                     frame = draw_help(frame)
 
@@ -108,8 +74,6 @@ class HandTrackApp:
                     break
                 if key in (ord("h"), ord("H")):
                     self.show_help = not self.show_help
-                if key in (ord("c"), ord("C")):
-                    self.canvas.clear()
                 if key in (ord("s"), ord("S")):
                     self._save(frame)
         finally:

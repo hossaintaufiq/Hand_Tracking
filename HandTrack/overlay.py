@@ -1,115 +1,108 @@
-"""Draw MediaPipe-style hand skeleton on camera frames."""
+"""Draw MediaPipe-style dotted hand skeleton on camera frames."""
 
 from __future__ import annotations
-
-from typing import Optional
 
 import cv2
 import numpy as np
 
-from HandTrack.landmarks import CONNECTIONS, LANDMARK_COLOR, COLOR_INDEX
+from HandTrack.landmarks import CONNECTIONS, LANDMARK_COLOR
 from HandTrack.tracker import HandResult
 
 
-def draw_hands(
-    frame: np.ndarray,
-    hands: list[HandResult],
+def _dotted_line(
+    img: np.ndarray,
+    p0: tuple[int, int],
+    p1: tuple[int, int],
+    color: tuple[int, int, int],
     *,
-    pen_active: bool = False,
-    drawing: bool = False,
-    index_tip: Optional[tuple[float, float]] = None,
-) -> np.ndarray:
-    """Render landmark overlay like the reference photo."""
+    thickness: int = 2,
+    gap: int = 6,
+    dash: int = 8,
+) -> None:
+    """Draw a dashed bone segment between two joints."""
+    x0, y0 = p0
+    x1, y1 = p1
+    dist = float(np.hypot(x1 - x0, y1 - y0))
+    if dist < 1.0:
+        return
+    steps = max(1, int(dist // (dash + gap)))
+    for i in range(steps + 1):
+        t0 = i * (dash + gap) / dist
+        t1 = min(1.0, (i * (dash + gap) + dash) / dist)
+        if t0 >= 1.0:
+            break
+        a = (int(x0 + (x1 - x0) * t0), int(y0 + (y1 - y0) * t0))
+        b = (int(x0 + (x1 - x0) * t1), int(y0 + (y1 - y0) * t1))
+        cv2.line(img, a, b, color, thickness, cv2.LINE_AA)
+
+
+def draw_hands(frame: np.ndarray, hands: list[HandResult]) -> np.ndarray:
+    """Render colored landmark dots + dotted bones (reference style)."""
     h, w = frame.shape[:2]
     out = frame
 
     for hand in hands:
-        pts = []
-        for i, lm in enumerate(hand.landmarks):
-            x = int(lm[0] * w)
-            y = int(lm[1] * h)
+        pts: list[tuple[int, int]] = []
+        for lm in hand.landmarks:
+            x = int(np.clip(lm[0], 0.0, 1.0) * (w - 1))
+            y = int(np.clip(lm[1], 0.0, 1.0) * (h - 1))
             pts.append((x, y))
 
-        # Bones first
+        # Soft shadow under bones for readability
         for a, b, color in CONNECTIONS:
-            cv2.line(out, pts[a], pts[b], color, 3, cv2.LINE_AA)
+            _dotted_line(out, pts[a], pts[b], (25, 25, 25), thickness=4, gap=5, dash=9)
+            _dotted_line(out, pts[a], pts[b], color, thickness=2, gap=5, dash=9)
 
-        # Joints
+        # Joint dots — tips slightly larger
+        tips = {4, 8, 12, 16, 20}
         for i, (x, y) in enumerate(pts):
             color = LANDMARK_COLOR.get(i, (200, 200, 200))
-            radius = 7 if i in (0, 4, 8, 12, 16, 20) else 5
-            cv2.circle(out, (x, y), radius + 2, (30, 30, 30), -1, cv2.LINE_AA)
+            radius = 6 if i in tips or i == 0 else 4
+            cv2.circle(out, (x, y), radius + 2, (20, 20, 20), -1, cv2.LINE_AA)
             cv2.circle(out, (x, y), radius, color, -1, cv2.LINE_AA)
 
-        # Handedness tag
-        tag = f"{hand.handedness}"
+        label = f"{hand.handedness}  {hand.score:.0%}"
+        lx = max(8, pts[0][0] - 24)
+        ly = min(h - 8, pts[0][1] + 36)
         cv2.putText(
-            out, tag, (pts[0][0] - 20, pts[0][1] + 40),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (240, 240, 240), 2, cv2.LINE_AA,
+            out, label, (lx, ly),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (245, 245, 245), 2, cv2.LINE_AA,
         )
-
-    # Pen cursor
-    if index_tip is not None and pen_active:
-        cx = int(index_tip[0] * w)
-        cy = int(index_tip[1] * h)
-        color = (0, 220, 255) if drawing else COLOR_INDEX
-        cv2.circle(out, (cx, cy), 14, color, 2, cv2.LINE_AA)
-        cv2.circle(out, (cx, cy), 4, color, -1, cv2.LINE_AA)
-        if drawing:
-            cv2.putText(out, "PEN", (cx + 16, cy - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
 
     return out
 
 
-def draw_hud(
-    frame: np.ndarray,
-    *,
-    message: str,
-    pen_active: bool,
-    color_index: int,
-    fps: float,
-) -> np.ndarray:
-    """Status strip at the top of the camera view."""
+def draw_hud(frame: np.ndarray, *, hands: int, fps: float, message: str = "") -> np.ndarray:
+    """Compact status strip."""
     h, w = frame.shape[:2]
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (w, 78), (20, 20, 20), -1)
-    frame = cv2.addWeighted(overlay, 0.55, frame, 0.45, 0)
+    bar = frame.copy()
+    cv2.rectangle(bar, (0, 0), (w, 56), (18, 18, 18), -1)
+    frame = cv2.addWeighted(bar, 0.50, frame, 0.50, 0)
 
-    pen = "PEN ON" if pen_active else "PEN OFF"
-    pen_color = (0, 220, 255) if pen_active else (160, 160, 160)
-    cv2.putText(frame, "HandTrack", (16, 28),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (80, 220, 200), 2, cv2.LINE_AA)
-    cv2.putText(frame, pen, (180, 28),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, pen_color, 2, cv2.LINE_AA)
-    cv2.putText(frame, f"{fps:.0f} FPS", (w - 110, 28),
+    cv2.putText(frame, "HandTrack", (16, 26),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.72, (80, 220, 200), 2, cv2.LINE_AA)
+    status = f"{hands} hand" + ("s" if hands != 1 else "")
+    cv2.putText(frame, status, (170, 26),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.62, (230, 230, 230), 2, cv2.LINE_AA)
+    cv2.putText(frame, f"{fps:.0f} FPS", (w - 110, 26),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1, cv2.LINE_AA)
-    cv2.putText(frame, message[:70], (16, 58),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (230, 230, 230), 1, cv2.LINE_AA)
-
-    # Color swatch
-    from HandTrack.canvas import PEN_COLORS_BGR
-    sw = PEN_COLORS_BGR[color_index % len(PEN_COLORS_BGR)]
-    cv2.rectangle(frame, (w - 48, 42), (w - 16, 70), sw, -1)
-    cv2.rectangle(frame, (w - 48, 42), (w - 16, 70), (255, 255, 255), 1)
+    if message:
+        cv2.putText(frame, message[:72], (16, 48),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (210, 210, 210), 1, cv2.LINE_AA)
     return frame
 
 
 def draw_help(frame: np.ndarray) -> np.ndarray:
     lines = [
-        "Double-pinch  =  START / STOP pen",
-        "Point index   =  write (pen on)",
-        "Pinch hold    =  lift stroke (pen stays on)",
-        "Open palm     =  clear",
-        "Victory       =  next color",
-        "Fist          =  pause",
-        "Thumbs up     =  save PNG",
-        "Q / Esc       =  quit",
+        "Show your hand to the camera",
+        "S  =  save snapshot",
+        "H  =  toggle help",
+        "Q / Esc  =  quit",
     ]
     y = frame.shape[0] - 20 * len(lines) - 12
     for i, line in enumerate(lines):
         cv2.putText(
             frame, line, (14, y + i * 20),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (210, 210, 210), 1, cv2.LINE_AA,
+            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (210, 210, 210), 1, cv2.LINE_AA,
         )
     return frame
