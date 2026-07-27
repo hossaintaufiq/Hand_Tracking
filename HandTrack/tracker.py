@@ -111,7 +111,7 @@ class HandTracker:
             if mirrored:
                 handedness = "Left" if handedness == "Right" else "Right"
 
-            key = f"{handedness}_{i}"
+            key = handedness if handedness not in seen else f"{handedness}_{i}"
             seen.add(key)
             pts = self._smoother.apply(key, pts)
             hands.append(

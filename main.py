@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
-"""HandTrack Jigsaw — select a camera area and solve it by hand.
+"""HandTrack Studio — premium dual-hand camera jigsaw.
 
 Run
 ---
     pip install -r requirements.txt
     python main.py
 
-Select mode
------------
-Pinch-drag                          Select area
-SPACE / Enter                       Create jigsaw from selection
-3 / 4 / 5                           Grid size (3x3, 4x4, 5x5)
-C                                   Clear selection
+Select
+------
+Show both hands
+Pinch with BOTH hands          Frame opposite corners
+Stretch L + R index tips       Resize the crop
+Release both                   Lock selection
+SPACE / Enter                  Create jigsaw
+3 / 4 / 5                      Grid size
+C                              Clear
 
-Play mode
----------
-Pinch on a piece                    Grab / move
-Release near correct slot           Snap in place
-R                                   Reshuffle
-N                                   New selection
+Play
+----
+Pinch a piece (either hand)    Grab
+Both hands at once             Move two pieces
+Release near slot              Snap
+R                              Reshuffle
+N                              New capture
 
-H                                   Toggle help
-Q / Esc                             Quit
+H                              Help
+Q / Esc                        Quit
 """
 
 from __future__ import annotations
