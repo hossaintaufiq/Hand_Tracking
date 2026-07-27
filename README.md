@@ -1,4 +1,6 @@
-# HandTrack — accurate webcam hand landmarks
+# HandTrack Jigsaw
+
+Select any area from your webcam and turn it into a hand-controlled jigsaw puzzle.
 
 ## Run
 
@@ -7,17 +9,23 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Features
+## How to play
 
-- Live camera hand tracking with MediaPipe Hand Landmarker
-- Colored joint dots + dotted finger/palm bones (reference style)
-- Temporal smoothing for stable landmarks
-- Correct Left/Right labels on mirrored camera view
+1. **Select** — Pinch and drag to frame an area on camera. Press `SPACE` to make the puzzle.
+2. **Play** — Pinch a piece to grab it, move your hand, release near its slot to snap.
+3. **Win** — When every piece is placed, the puzzle is complete.
 
 ## Controls
 
-| Key | Action |
-|-----|--------|
-| S | Save PNG snapshot |
-| H | Toggle help |
-| Q / Esc | Quit |
+| Input | Action |
+|-------|--------|
+| Pinch-drag | Select area |
+| SPACE | Create jigsaw |
+| 3 / 4 / 5 | Grid size |
+| Pinch piece | Grab / move |
+| Release near slot | Snap |
+| R | Reshuffle |
+| N | New selection |
+| C | Clear selection |
+| H | Help |
+| Q | Quit |

@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
-"""HandTrack — accurate webcam hand landmark tracking.
+"""HandTrack Jigsaw — select a camera area and solve it by hand.
 
 Run
 ---
     pip install -r requirements.txt
     python main.py
 
-Controls
---------
-S                                   Save snapshot
+Select mode
+-----------
+Pinch-drag                          Select area
+SPACE / Enter                       Create jigsaw from selection
+3 / 4 / 5                           Grid size (3x3, 4x4, 5x5)
+C                                   Clear selection
+
+Play mode
+---------
+Pinch on a piece                    Grab / move
+Release near correct slot           Snap in place
+R                                   Reshuffle
+N                                   New selection
+
 H                                   Toggle help
 Q / Esc                             Quit
 """
