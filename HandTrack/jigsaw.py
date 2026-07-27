@@ -207,17 +207,16 @@ class JigsawPuzzle:
             p.lift = ui.smooth_toward(p.lift, want, 0.28)
 
     def draw_reference(self, frame: np.ndarray) -> np.ndarray:
-        """Small reference thumbnail — premium assist without spoiling the board."""
+        """Compact reference thumbnail (no text label)."""
         h, w = frame.shape[:2]
-        tw = 132
-        th = max(80, int(tw * self.source.shape[0] / max(1, self.source.shape[1])))
+        tw = 110
+        th = max(70, int(tw * self.source.shape[0] / max(1, self.source.shape[1])))
         thumb = cv2.resize(self.source, (tw, th), interpolation=cv2.INTER_AREA)
-        x1, y1 = w - tw - 20, h - th - 24
+        x1, y1 = w - tw - 16, h - th - 16
         x2, y2 = x1 + tw, y1 + th
-        frame = ui.glass_panel(frame, (x1 - 10, y1 - 28), (x2 + 10, y2 + 10), alpha=0.7, radius=12, accent_top=True)
-        ui.put_text(frame, "REFERENCE", (x1, y1 - 10), scale=0.40, color=ui.ACCENT)
+        cv2.rectangle(frame, (x1 - 3, y1 - 3), (x2 + 3, y2 + 3), ui.BG_ELEVATED, -1)
         frame[y1:y2, x1:x2] = thumb
-        cv2.rectangle(frame, (x1, y1), (x2, y2), ui.STROKE, 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (x1 - 3, y1 - 3), (x2 + 3, y2 + 3), ui.ACCENT, 1, cv2.LINE_AA)
         return frame
 
     def draw(self, frame: np.ndarray, *, show_guides: bool = True) -> np.ndarray:
@@ -225,25 +224,20 @@ class JigsawPuzzle:
         out = frame
         bx, by, bw, bh = self.board_x, self.board_y, self.board_w, self.board_h
 
-        # Elevated board card
-        pad = 10
-        well = out.copy()
-        ui.rounded_rect(
-            well, (bx - pad, by - pad), (bx + bw + pad, by + bh + pad),
-            (14, 16, 20), radius=16,
-        )
-        ui.rounded_rect(well, (bx, by), (bx + bw, by + bh), (26, 28, 34), radius=8)
-        out = cv2.addWeighted(well, 0.62, out, 0.38, 0)
-        ui.rounded_rect(
-            out, (bx - pad, by - pad), (bx + bw + pad, by + bh + pad),
-            ui.STROKE, radius=16, thickness=1,
-        )
+        # Fast board well (ROI darken, no full-frame rounded overlay copies)
+        pad = 8
+        x0, y0 = max(0, bx - pad), max(0, by - pad)
+        x1, y1 = min(out.shape[1], bx + bw + pad), min(out.shape[0], by + bh + pad)
+        roi = out[y0:y1, x0:x1]
+        dark = np.empty_like(roi)
+        dark[:] = (18, 20, 24)
+        cv2.addWeighted(dark, 0.55, roi, 0.45, 0, dst=roi)
         cv2.rectangle(out, (bx, by), (bx + bw, by + bh), ui.ACCENT, 1, cv2.LINE_AA)
 
-        # Ghost reference
-        ghost = out.copy()
-        ghost[by:by + bh, bx:bx + bw] = self.source
-        out = cv2.addWeighted(ghost, 0.10, out, 0.90, 0)
+        # Light ghost
+        if by + bh <= out.shape[0] and bx + bw <= out.shape[1]:
+            board = out[by:by + bh, bx:bx + bw]
+            cv2.addWeighted(self.source, 0.10, board, 0.90, 0, dst=board)
 
         if show_guides:
             tw, th = bw // self.cols, bh // self.rows
@@ -254,8 +248,7 @@ class JigsawPuzzle:
                 x = bx + c * tw
                 cv2.line(out, (x, by), (x, by + bh), ui.STROKE_SOFT, 1, cv2.LINE_AA)
 
-        # Shadows then tiles
-        shadow = out.copy()
+        # Soft shadow for free pieces only (cheap filled rects)
         for p in self.pieces:
             if p.placed:
                 continue
@@ -263,10 +256,9 @@ class JigsawPuzzle:
             sx = int(p.draw_x) + 3 + lift_px // 2
             sy = int(p.draw_y) + 5 + lift_px
             if 0 <= sx < out.shape[1] - p.w and 0 <= sy < out.shape[0] - p.h:
-                cv2.rectangle(shadow, (sx, sy), (sx + p.w, sy + p.h), (0, 0, 0), -1)
-        out = cv2.addWeighted(shadow, 0.20, out, 0.80, 0)
+                sh = out[sy:sy + p.h, sx:sx + p.w]
+                cv2.addWeighted(sh, 0.75, np.zeros_like(sh), 0.25, 0, dst=sh)
 
-        # Draw placed first (stable), held last
         ordered = sorted(self.pieces, key=lambda q: (0 if q.placed else 1, q.lift))
         for p in ordered:
             x = int(p.draw_x)

@@ -77,14 +77,25 @@ class HandTracker:
         self._start_ms = int(time.perf_counter() * 1000)
         self._last_ts = -1
 
-    def process(self, frame_bgr: np.ndarray, *, mirrored: bool = True) -> list[HandResult]:
+    def process(self, frame_bgr: np.ndarray, *, mirrored: bool = True, infer_max_width: int = 960) -> list[HandResult]:
         from mediapipe import Image as MpImage, ImageFormat
         import cv2
 
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        # Infer on a downscaled copy — landmarks stay normalized, display stays full-res
+        h, w = frame_bgr.shape[:2]
+        if w > infer_max_width:
+            scale = infer_max_width / float(w)
+            small = cv2.resize(
+                frame_bgr,
+                (infer_max_width, max(1, int(h * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        else:
+            small = frame_bgr
+
+        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
         mp_image = MpImage(image_format=ImageFormat.SRGB, data=rgb)
 
-        # Monotonic timestamp from real clock (more accurate than fixed +33)
         ts = int(time.perf_counter() * 1000) - self._start_ms
         if ts <= self._last_ts:
             ts = self._last_ts + 1

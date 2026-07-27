@@ -1,4 +1,4 @@
-"""HandTrack Studio — premium two-hand jigsaw from a live camera crop."""
+"""HandTrack Studio — fast dual-hand jigsaw, clean screen, full-res display."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from HandTrack.overlay import (
     draw_hands,
     draw_help,
     draw_hud,
-    draw_status_chip,
     draw_win,
 )
 from HandTrack.pointer import DualPointerEngine, DualPointerState
@@ -37,6 +36,7 @@ class HandTrackApp:
     """Two-hand framing + dual-hand jigsaw assembly."""
 
     MIN_SEL = 140
+    INFER_WIDTH = 960  # tracking resolution (display stays camera-native)
 
     def __init__(self, camera_index: int = 0) -> None:
         root = Path(__file__).resolve().parent
@@ -45,7 +45,7 @@ class HandTrackApp:
         self.pointer = DualPointerEngine()
         self.fx = Effects()
         self.camera_index = camera_index
-        self.show_help = True
+        self.show_help = False
         self._fps = 0.0
         self._frames = 0
         self._fps_t = time.perf_counter()
@@ -63,6 +63,7 @@ class HandTrackApp:
         self._progress_disp: Optional[float] = None
         self._play_started: Optional[float] = None
         self._win_celebrated = False
+        self._last_live: Optional[np.ndarray] = None
 
     def run(self) -> int:
         cap = self._open_camera()
@@ -70,16 +71,18 @@ class HandTrackApp:
             print("ERROR: Could not open webcam.")
             return 1
 
-        for size in ((1920, 1080), (1280, 720), (960, 540)):
+        # Prefer sharp HD for display quality
+        for size in ((1920, 1080), (1280, 720)):
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
             ok, probe = cap.read()
-            if ok and probe is not None and probe.shape[1] >= size[0] * 0.8:
+            if ok and probe is not None and probe.shape[1] >= size[0] * 0.75:
                 break
-        cap.set(cv2.CAP_PROP_FPS, 30)
+        cap.set(cv2.CAP_PROP_FPS, 60)
         try:
             cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         except Exception:
             pass
 
@@ -91,8 +94,8 @@ class HandTrackApp:
         else:
             cv2.resizeWindow(win, 1280, 720)
 
-        self.fx.flash_fade(0.65)
-        print("HandTrack Studio — dual-hand frame · SPACE to craft · Q quit")
+        self.fx.flash_fade(0.45)
+        print("HandTrack Studio — dual-hand frame · SPACE · H help · Q quit")
 
         try:
             while True:
@@ -100,18 +103,23 @@ class HandTrackApp:
                 if not ok:
                     break
                 live = cv2.flip(live, 1)
-                h, w = live.shape[:2]
+                # One display copy keeps the camera buffer clean for HD freezes
+                frame_base = live.copy()
+                self._last_live = frame_base
+                h, w = frame_base.shape[:2]
                 now = time.perf_counter()
 
-                hands = self.tracker.process(live, mirrored=True)
+                hands = self.tracker.process(
+                    live, mirrored=True, infer_max_width=self.INFER_WIDTH,
+                )
                 dual = self.pointer.update(hands)
 
                 if self.mode == Mode.SELECT:
-                    frame = self._update_select(live, dual, w, h, now)
+                    frame = self._update_select(frame_base, dual, w, h, now)
                 else:
-                    frame = self._update_play(live, dual, w, h, now)
+                    frame = self._update_play(frame_base, dual, w, h, now)
 
-                frame = ui.vignette(frame, strength=0.26)
+                frame = ui.vignette(frame, strength=0.18)
                 self.fx.update()
                 frame = self.fx.draw(frame)
 
@@ -135,51 +143,38 @@ class HandTrackApp:
         cap = cv2.VideoCapture(self.camera_index)
         return cap if cap.isOpened() else None
 
-    def _timer_str(self) -> str:
-        if self._play_started is None:
-            return ""
-        sec = int(max(0.0, time.perf_counter() - self._play_started))
-        return f"{sec // 60:02d}:{sec % 60:02d}"
-
     # ---- SELECT -----------------------------------------------------------
 
     def _update_select(
         self, live: np.ndarray, dual: DualPointerState, w: int, h: int, now: float,
     ) -> np.ndarray:
+        # Live view while framing; only freeze when locked
         if self._sel_locked and self._frozen is not None:
             frame = self._frozen.copy()
         else:
-            frame = live.copy()
+            frame = live
 
         if dual.left and dual.right and not self._sel_locked:
             if dual.both_pinching:
                 self._framing = True
                 self._corner_a = (dual.left.x * (w - 1), dual.left.y * (h - 1))
                 self._corner_b = (dual.right.x * (w - 1), dual.right.y * (h - 1))
-                self._frozen = live.copy()
             elif dual.both_falling and self._framing:
                 self._framing = False
                 if self._selection_valid():
                     self._sel_locked = True
+                    self._frozen = live.copy()
                     self.fx.burst(
                         (self._corner_a[0] + self._corner_b[0]) * 0.5,
                         (self._corner_a[1] + self._corner_b[1]) * 0.5,
                         color=ui.ACCENT, n=12,
                     )
-                    if self._frozen is None:
-                        self._frozen = live.copy()
                 else:
                     self._clear_selection()
 
         if self._corner_a and self._corner_b:
             self._smooth_a = ui.lerp_point(self._smooth_a, self._corner_a, 0.42)
             self._smooth_b = ui.lerp_point(self._smooth_b, self._corner_b, 0.42)
-            if self._sel_locked:
-                label = "Locked — SPACE to create"
-            elif self._framing:
-                label = "Framing"
-            else:
-                label = "Ready — SPACE or adjust"
             frame = draw_dual_selection(
                 frame,
                 self._smooth_a[0], self._smooth_a[1],
@@ -187,45 +182,25 @@ class HandTrackApp:
                 locked=self._sel_locked,
                 active=self._framing,
                 grid=self.grid,
-                label=label,
             )
 
         frame = draw_framing_link(frame, dual, w, h)
-        frame = draw_hands(frame, [p.hand for p in dual.hands], light=False)
+        # Dotted only when not framing-heavy; solid is fine for speed in select too
+        frame = draw_hands(frame, [p.hand for p in dual.hands], light=True)
         draw_hand_cursors(frame, dual.hands, t=now)
-
-        draw_status_chip(frame, f"{dual.count}/2 hands", w - 150, 108)
-        if dual.both_pinching:
-            draw_status_chip(frame, "DUAL PINCH", w - 150, 146, color=ui.ACCENT_HOT)
 
         frame, _ = draw_hud(
             frame,
             title="STUDIO",
-            message=self._select_message(dual),
-            fps=self._fps,
             extra=f"{self.grid}×{self.grid}",
-            step=1,
         )
         if self.show_help:
             frame = draw_help(frame, [
-                "Pinch with both hands to frame corners",
-                "Stretch L + R index tips to resize",
-                "Release to lock the selection",
-                "SPACE creates the jigsaw",
-                "3 / 4 / 5 grid · C clear · H · Q",
+                "Both hands pinch to frame",
+                "Release to lock · SPACE to create",
+                "3 / 4 / 5 grid · C clear · Q quit",
             ])
         return frame
-
-    def _select_message(self, dual: DualPointerState) -> str:
-        if self._sel_locked:
-            return "Selection locked — press SPACE to craft your puzzle"
-        if dual.count < 2:
-            return "Show both hands to begin framing"
-        if dual.both_pinching:
-            return "Stretch the frame between your pinched hands…"
-        if self._corner_a and self._corner_b and self._selection_valid():
-            return "Looking good — SPACE to create, or dual-pinch to adjust"
-        return "Pinch with both hands — each tip is a corner"
 
     def _selection_valid(self) -> bool:
         if not self._corner_a or not self._corner_b:
@@ -244,7 +219,10 @@ class HandTrackApp:
         self._frozen = None
 
     def _start_puzzle(self) -> None:
-        if not self._selection_valid() or self._frozen is None:
+        if not self._selection_valid():
+            return
+        if self._frozen is None:
+            # Capture now if user hit SPACE mid-frame without release-lock
             return
         src = self._frozen
         x0, x1 = sorted((int(self._corner_a[0]), int(self._corner_b[0])))  # type: ignore
@@ -266,7 +244,7 @@ class HandTrackApp:
         board_w = max(self.grid * 48, board_w)
         board_h = max(self.grid * 48, board_h)
         board_x = (fw - board_w) // 2
-        board_y = (fh - board_h) // 2 + 20
+        board_y = (fh - board_h) // 2 + 12
 
         self.puzzle = JigsawPuzzle.from_image(
             crop, self.grid, self.grid, board_x, board_y, board_w, board_h,
@@ -274,7 +252,7 @@ class HandTrackApp:
         self._progress_disp = 0.0
         self._play_started = time.perf_counter()
         self._win_celebrated = False
-        self.fx.flash_fade(0.5)
+        self.fx.flash_fade(0.4)
         self.mode = Mode.PLAY
 
     # ---- PLAY -------------------------------------------------------------
@@ -283,9 +261,9 @@ class HandTrackApp:
         self, live: np.ndarray, dual: DualPointerState, w: int, h: int, now: float,
     ) -> np.ndarray:
         assert self.puzzle is not None
-        frame = live.copy()
-        veil = np.full_like(frame, ui.BG)
-        frame = cv2.addWeighted(veil, 0.58, frame, 0.42, 0)
+        frame = live
+        # Fast backdrop veil via ROI multiply-ish blend
+        cv2.addWeighted(frame, 0.48, np.full_like(frame, ui.BG), 0.52, 0, dst=frame)
 
         if self.mode == Mode.PLAY:
             for hp in dual.hands:
@@ -295,14 +273,10 @@ class HandTrackApp:
                     self.puzzle.pick(key, px, py)
                 if hp.pinching:
                     self.puzzle.drag(key, px, py, w, h)
-                    if self.puzzle.near_slot(key):
-                        draw_status_chip(
-                            frame, "SNAP", int(px) + 18, int(py) - 36, color=ui.SUCCESS,
-                        )
                 if hp.pinch_falling:
                     snapped, center = self.puzzle.drop(key)
                     if snapped and center is not None:
-                        self.fx.burst(center[0], center[1], color=ui.SUCCESS, n=16)
+                        self.fx.burst(center[0], center[1], color=ui.SUCCESS, n=14)
                     if self.puzzle.completed:
                         self.mode = Mode.WIN
 
@@ -314,34 +288,24 @@ class HandTrackApp:
         draw_hand_cursors(frame, dual.hands, t=now)
 
         progress = self.puzzle.placed_count / max(1, self.puzzle.total)
-        step = 3 if self.mode == Mode.WIN else 2
         if self.mode == Mode.WIN:
             if not self._win_celebrated:
-                self.fx.confetti(w, h, n=55)
-                self.fx.flash_fade(0.4)
+                self.fx.confetti(w, h, n=48)
+                self.fx.flash_fade(0.35)
                 self._win_celebrated = True
             frame = draw_win(frame, t=now)
-            msg = "Beautifully assembled"
-        else:
-            msg = "Magnetic snap assists when you’re close · both hands welcome"
 
         frame, self._progress_disp = draw_hud(
             frame,
             title="STUDIO",
-            message=msg,
-            fps=self._fps,
-            extra=f"{self.puzzle.placed_count} / {self.puzzle.total}",
+            extra=f"{self.puzzle.placed_count}/{self.puzzle.total}",
             progress=progress,
             progress_display=self._progress_disp,
-            step=step,
-            timer=self._timer_str(),
         )
         if self.show_help and self.mode == Mode.PLAY:
             frame = draw_help(frame, [
-                "Pinch a tile to lift — either hand",
-                "Hold two pieces at once if you like",
-                "Release near the slot — magnetism helps",
-                "R reshuffle · N new capture · Q quit",
+                "Pinch to lift · release to snap",
+                "R reshuffle · N new · Q quit",
             ])
         return frame
 
@@ -358,6 +322,8 @@ class HandTrackApp:
             self._clear_selection()
         if key in (ord(" "), 13) and self.mode == Mode.SELECT:
             if self._selection_valid():
+                if self._frozen is None and self._last_live is not None:
+                    self._frozen = self._last_live.copy()
                 self._sel_locked = True
                 self._start_puzzle()
         if key in (ord("r"), ord("R")) and self.puzzle is not None:
@@ -365,7 +331,7 @@ class HandTrackApp:
             self._progress_disp = 0.0
             self._play_started = time.perf_counter()
             self._win_celebrated = False
-            self.fx.flash_fade(0.35)
+            self.fx.flash_fade(0.3)
             self.mode = Mode.PLAY
         if key in (ord("n"), ord("N")):
             self.puzzle = None
@@ -373,7 +339,7 @@ class HandTrackApp:
             self._progress_disp = None
             self._play_started = None
             self._win_celebrated = False
-            self.fx.flash_fade(0.4)
+            self.fx.flash_fade(0.3)
             self.mode = Mode.SELECT
         return True
 
