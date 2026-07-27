@@ -56,6 +56,7 @@ class DualPointerEngine:
     def __init__(self) -> None:
         self._pinch: dict[str, bool] = {}
         self._was_both = False
+        self._smooth: dict[str, tuple[float, float]] = {}
 
     def update(self, hands: list[HandResult]) -> DualPointerState:
         pointers: list[HandPointer] = []
@@ -94,6 +95,23 @@ class DualPointerEngine:
                     hand=hand,
                 )
             )
+
+        # Per-hand tip smoothing for butter-smooth cursors
+        for p in pointers:
+            key = p.handedness
+            prev = self._smooth.get(key)
+            if prev is None:
+                self._smooth[key] = (p.x, p.y)
+            else:
+                # Faster when pinching (drag) so it doesn't feel laggy
+                a = 0.55 if p.pinching else 0.38
+                sx = prev[0] * (1 - a) + p.x * a
+                sy = prev[1] * (1 - a) + p.y * a
+                self._smooth[key] = (sx, sy)
+                p.x, p.y = sx, sy
+        for k in list(self._smooth.keys()):
+            if k not in seen and not any(p.handedness == k for p in pointers):
+                del self._smooth[k]
 
         # Drop stale pinch flags
         for k in list(self._pinch.keys()):
